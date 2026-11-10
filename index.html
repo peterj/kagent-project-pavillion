@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kagent: AI agents, native to Kubernetes</title>
+<style>
+  :root {
+    --bg: #120d1c;
+    --surface: #1c1528;
+    --surface-2: #261d35;
+    --surface-3: #31264a;
+    --text: #f5f2fa;
+    --muted: #a99fbb;
+    --accent: #942de7;
+    --accent-text: #c99bf7;
+    --accent-ink: #ffffff;
+    --font: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body.idle { cursor: none; }
+
+  #viewport {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+  }
+
+  #stage {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    flex: none;
+    transform-origin: center center;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    padding: 120px 140px 170px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 600ms ease, visibility 0s linear 600ms;
+  }
+
+  .slide.active {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 600ms ease, visibility 0s;
+  }
+
+  /* Staggered entrance; --i is assigned per element by script */
+  .r {
+    opacity: 0;
+    transform: translateY(28px);
+    transition: opacity 700ms ease, transform 700ms cubic-bezier(.2, .7, .2, 1);
+    transition-delay: calc(var(--i, 0) * 140ms + 150ms);
+  }
+
+  .slide.active .r { opacity: 1; transform: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .r { transform: none; transition: opacity 300ms ease; transition-delay: 0ms; }
+  }
+
+  /* Type */
+  h1 {
+    font-size: 128px;
+    line-height: 1.02;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+  }
+
+  h2 {
+    font-size: 84px;
+    line-height: 1.06;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    max-width: 1500px;
+  }
+
+  h3 {
+    font-size: 40px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .accent { color: var(--accent-text); }
+
+  p.body {
+    font-size: 30px;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+
+  code, pre { font-family: var(--mono); }
+
+  /* Surfaces */
+  .card {
+    background: var(--surface);
+    border-radius: 28px;
+    padding: 44px 44px 48px;
+  }
+
+  .card h3 { margin-bottom: 16px; }
+  .card h3 + .chips { margin-top: 32px; }
+
+  .grid { display: grid; gap: 32px; margin-top: 72px; }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+
+  .num {
+    display: inline-grid;
+    place-items: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 30px;
+    font-weight: 800;
+    margin-bottom: 32px;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 16px; }
+
+  .chip {
+    white-space: nowrap;
+    font-size: 30px;
+    font-weight: 600;
+    padding: 16px 28px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .chip.solid { background: var(--accent); color: var(--accent-ink); }
+
+  /* Title slide */
+  .hero-logo { width: 760px; height: auto; margin-bottom: 72px; }
+
+  .badges { display: flex; gap: 16px; margin-top: 72px; }
+
+  /* Equation slide */
+  .equation {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    align-items: stretch;
+    gap: 28px;
+    margin-top: 72px;
+  }
+
+  .equation .op {
+    align-self: center;
+    font-size: 96px;
+    font-weight: 300;
+    color: var(--muted);
+  }
+
+  .equation .card.main { background: var(--accent); }
+  .equation .card.main p.body { color: rgba(255, 255, 255, .85); }
+
+  /* Code */
+  .code {
+    background: var(--surface);
+    border-radius: 28px;
+    padding: 32px 44px;
+    font-size: 24px;
+    line-height: 1.5;
+    white-space: pre;
+    color: var(--text);
+  }
+
+  .code .k { color: var(--accent-text); }
+  .code .c { color: var(--muted); }
+  .code .s { color: #9fe0b8; }
+  .code .p { color: var(--muted); user-select: none; }
+
+  /* Architecture */
+  .arch {
+    display: grid;
+    gap: 22px;
+    margin-top: 56px;
+    justify-items: center;
+  }
+
+  .arch .row { display: grid; gap: 24px; width: 100%; }
+
+  .node {
+    background: var(--surface);
+    border-radius: 22px;
+    padding: 26px 32px;
+    text-align: center;
+  }
+
+  .node strong { display: block; font-size: 32px; font-weight: 700; }
+  .node span { display: block; font-size: 24px; color: var(--muted); margin-top: 8px; }
+
+  .node.controller { background: var(--accent); padding: 34px 40px; }
+  .node.controller span { color: rgba(255, 255, 255, .85); }
+  .node.controller .chips { justify-content: center; margin-top: 18px; }
+  .node.controller .chip { background: rgba(0, 0, 0, .22); font-size: 24px; padding: 10px 22px; }
+
+  .down {
+    width: 0;
+    height: 0;
+    border-left: 16px solid transparent;
+    border-right: 16px solid transparent;
+    border-top: 20px solid var(--surface-3);
+  }
+
+  /* Demo: a static copy of the kagent.dev interactive UI mock */
+  .slide.demo-slide { padding-top: 56px; padding-bottom: 148px; }
+
+  .ui {
+    zoom: 1.3;
+    width: 1180px;
+    margin: 28px auto 0;
+    position: relative;
+    overflow: hidden;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, .1);
+    background: #0c0b10;
+    color: #fff;
+    font-size: 14px;
+    line-height: 1.5;
+    box-shadow: 0 0 0 1px rgba(167, 139, 250, .08), 0 40px 140px -30px rgba(139, 92, 246, .55);
+  }
+
+  .ui .mono { font-family: var(--mono); }
+
+  .ui-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+  }
+
+  .ui-dots { display: flex; gap: 6px; }
+  .ui-dots i { width: 12px; height: 12px; border-radius: 999px; }
+  .ui-bar > img { width: 24px; height: 24px; margin-left: 12px; }
+  .ui-brand { font-weight: 600; }
+
+  .ui-path {
+    margin-left: auto;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, .05);
+    padding: 4px 12px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, .4);
+  }
+
+  .ping { position: relative; display: inline-flex; width: 8px; height: 8px; flex: none; }
+  .ping::before, .ping::after { content: ""; position: absolute; inset: 0; border-radius: 999px; background: #a78bfa; }
+  .ping::before { animation: ping 1s cubic-bezier(0, 0, .2, 1) infinite; opacity: .75; }
+  .ping.lg { width: 14px; height: 14px; }
+  .ping.lg::after { border: 2px solid #c4b5fd; background: rgba(139, 92, 246, .6); }
+
+  @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
+
+  .ui-body { display: grid; grid-template-columns: 200px 1fr; height: 500px; }
+
+  .ui-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    border-right: 1px solid rgba(255, 255, 255, .08);
+  }
+
+  .ui-nav a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: rgba(255, 255, 255, .7);
+    white-space: nowrap;
+  }
+
+  .ui-nav a.on { background: rgba(139, 92, 246, .15); color: #ddd6fe; }
+  .ui-nav svg { flex: none; }
+
+  .ui-nav .foot {
+    margin-top: auto;
+    border-top: 1px solid rgba(255, 255, 255, .08);
+    padding-top: 8px;
+    color: rgba(255, 255, 255, .5);
+  }
+
+  .ui-main { position: relative; overflow: hidden; padding: 20px; }
+
+  .slide.active .ui-scroll { animation: ui-scroll 7s ease-in-out 5s forwards; }
+
+  @keyframes ui-scroll { to { transform: translateY(-330px); } }
+
+  body.is-paused .ui-scroll { animation-play-state: paused !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .slide.active .ui-scroll { animation: none; }
+  }
+
+  .ui-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+  .ui-title { font-size: 28px; font-weight: 500; }
+  .ui-actions { display: flex; gap: 8px; }
+  .ui-btn { border-radius: 8px; background: #7c3aed; padding: 6px 14px; }
+
+  .ui-card {
+    margin-bottom: 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(255, 255, 255, .02);
+  }
+
+  .ui-card-h { border-bottom: 1px solid rgba(255, 255, 255, .08); padding: 8px 16px; font-weight: 500; }
+  .ui-card-t { padding: 12px 16px 0; font-size: 13px; color: rgba(255, 255, 255, .7); }
+  .ui-card-t p + p { margin-top: 4px; }
+  .ui-card-t .v { color: #c4b5fd; }
+
+  .ui-flow {
+    display: grid;
+    grid-template-columns: 1fr 32px 1fr 32px 1fr;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .ui-stack { display: grid; gap: 8px; }
+
+  .ui-box {
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, .15);
+    background: rgba(0, 0, 0, .4);
+    padding: 8px 12px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .ui-box b { font-family: var(--mono); font-size: 13px; font-weight: 400; }
+  .ui-box small { font-size: 12px; color: rgba(255, 255, 255, .6); }
+  .ui-arrow { color: #a78bfa; text-align: center; }
+
+  .ui-tabs {
+    display: flex;
+    gap: 32px;
+    border-bottom: 1px solid rgba(255, 255, 255, .1);
+    margin-bottom: 12px;
+  }
+
+  .ui-tabs span { padding-bottom: 8px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: rgba(255, 255, 255, .8); text-transform: capitalize; }
+  .ui-tabs span.on { border-color: #a78bfa; color: #c4b5fd; }
+
+  .ui-filters { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+
+  .ui-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, .2);
+    padding: 6px 12px;
+    color: rgba(255, 255, 255, .4);
+  }
+
+  .ui-field.search { flex: 1; max-width: 380px; }
+  .ui-field.ns { width: 220px; color: rgba(255, 255, 255, .8); justify-content: space-between; }
+  .ui-muted { color: rgba(255, 255, 255, .6); }
+  .ui-refresh { border-radius: 8px; border: 1px solid rgba(255, 255, 255, .15); padding: 6px 14px; display: flex; gap: 8px; align-items: center; }
+
+  .ui-table { border-radius: 12px; background: rgba(255, 255, 255, .03); overflow: hidden; }
+  .ui-table table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+  .ui-table th { font-weight: 500; padding: 10px 12px; border-right: 1px solid rgba(255, 255, 255, .06); white-space: nowrap; }
+  .ui-table th:nth-last-child(2) { border-right: 0; }
+  .ui-table tr { border-bottom: 1px solid rgba(255, 255, 255, .06); }
+  .ui-table tbody tr:last-child { border-bottom: 0; }
+  .ui-table td { padding: 10px 12px; vertical-align: middle; white-space: nowrap; }
+  .ui-name { font-family: var(--mono); color: #c4b5fd; }
+  .ui-desc { display: block; max-width: 320px; white-space: normal; font-size: 12px; color: rgba(255, 255, 255, .55); margin-top: 2px; }
+  .ui-chat { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; font-size: 11px; font-weight: 500; color: #ddd6fe; vertical-align: middle; }
+  .ui-badge { display: inline-block; border-radius: 4px; border: 1px solid rgba(255, 255, 255, .1); background: rgba(255, 255, 255, .08); color: rgba(255, 255, 255, .8); padding: 1px 6px; font-size: 12px; }
+  .ui-badge.ready { border-color: rgba(16, 185, 129, .4); background: rgba(16, 185, 129, .1); color: #34d399; }
+  .ui-ops { display: flex; justify-content: flex-end; gap: 12px; color: rgba(255, 255, 255, .7); }
+  .ui-ops .del { color: rgba(239, 68, 68, .9); }
+
+  /* Terminal */
+  .term {
+    background: var(--surface);
+    border-radius: 28px;
+    padding: 44px 52px;
+    font-family: var(--mono);
+    font-size: 26px;
+    line-height: 1.5;
+    margin-top: 56px;
+  }
+
+  .term .line { white-space: pre; }
+  .term .line + .line { margin-top: 6px; }
+  .term .pr { color: var(--accent-text); }
+
+  /* Contribute */
+  .areas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 40px; }
+
+  .area {
+    background: var(--surface-2);
+    border-radius: 22px;
+    padding: 28px 32px;
+  }
+
+  .area code { font-size: 28px; color: var(--accent-text); font-weight: 600; }
+  .area p { font-size: 24px; color: var(--muted); margin-top: 8px; line-height: 1.4; }
+
+  /* QR */
+  .links { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; margin-top: 72px; }
+
+  .link {
+    background: var(--surface);
+    border-radius: 28px;
+    padding: 36px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .link img {
+    width: 320px;
+    height: 320px;
+    border-radius: 16px;
+    background: #fff;
+    padding: 14px;
+    margin-bottom: 28px;
+  }
+
+  .link strong { font-size: 40px; font-weight: 700; }
+
+  /* Chrome */
+  #footer {
+    position: absolute;
+    left: 140px;
+    right: 140px;
+    bottom: 56px;
+    display: flex;
+    align-items: center;
+    gap: 40px;
+  }
+
+  #footer .logo { height: 34px; width: auto; flex: none; }
+
+  #progress { flex: 1; display: flex; gap: 10px; }
+
+  #progress button {
+    flex: 1;
+    height: 8px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--surface-3);
+    overflow: hidden;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  #progress button i {
+    display: block;
+    height: 100%;
+    width: 0%;
+    background: var(--accent-text);
+    border-radius: inherit;
+  }
+
+  #progress button.done i { width: 100%; background: var(--muted); }
+
+  #paused {
+    position: absolute;
+    top: 28px;
+    right: 140px;
+    font-size: 24px;
+    font-weight: 700;
+    padding: 12px 24px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+    opacity: 0;
+    transition: opacity 200ms ease;
+  }
+
+  body.is-paused #paused { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="viewport">
+<main id="stage">
+
+  <!-- 1. Title -->
+  <section class="slide" data-duration="10">
+    <img class="hero-logo r" src="assets/icon-dark.svg" alt="kagent">
+    <h1 class="r">AI agents,<br><span class="accent">native to Kubernetes.</span></h1>
+    <div class="badges r">
+      <span class="chip solid">CNCF project</span>
+      <span class="chip">Apache 2.0</span>
+      <span class="chip">github.com/kagent-dev/kagent</span>
+    </div>
+  </section>
+
+  <!-- 2. Why -->
+  <section class="slide" data-duration="13">
+    <h2 class="r">Agents are workloads.<br><span class="accent">Run them on Kubernetes.</span></h2>
+    <div class="grid g4">
+      <div class="card r"><div class="num">1</div><h3>Run</h3><p class="body">Deploy, scale and isolate agents like any other service.</p></div>
+      <div class="card r"><div class="num">2</div><h3>Connect</h3><p class="body">Give agents controlled access to models and tools.</p></div>
+      <div class="card r"><div class="num">3</div><h3>Remember</h3><p class="body">Keep conversations and task history across restarts.</p></div>
+      <div class="card r"><div class="num">4</div><h3>Observe</h3><p class="body">Trace every model call and tool call.</p></div>
+    </div>
+  </section>
+
+  <!-- 3. Core concepts -->
+  <section class="slide" data-duration="15">
+    <h2 class="r">An agent is a Kubernetes resource.</h2>
+    <div class="equation">
+      <div class="card main r">
+        <h3>Agent</h3>
+        <p class="body">The runnable agent.</p>
+      </div>
+      <div class="op r">=</div>
+      <div class="card r">
+        <h3>AgentTemplate</h3>
+        <p class="body">Prompt, model, tools, skills and subagents.</p>
+      </div>
+      <div class="op r">+</div>
+      <div class="card r">
+        <h3>Harness</h3>
+        <p class="body">Go ADK, Codex, Claude or your own runtime.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. YAML -->
+  <section class="slide" data-duration="16">
+    <h2 class="r">Define it in YAML. Ship it with GitOps.</h2>
+    <div class="grid g2" style="margin-top:48px; align-items:start">
+      <div class="r">
+<pre class="code"><span class="k">apiVersion:</span> api.kagent.dev/v1alpha3
+<span class="k">kind:</span> AgentTemplate
+<span class="k">metadata:</span>
+  <span class="k">name:</span> my-first-template
+<span class="k">spec:</span>
+  <span class="k">description:</span> My first kagent agent
+  <span class="k">modelConfig:</span>
+    <span class="k">name:</span> default-model-config
+  <span class="k">systemPrompt:</span> <span class="s">You are a concise,</span>
+    <span class="s">helpful assistant.</span></pre>
+      </div>
+      <div class="r">
+<pre class="code"><span class="k">apiVersion:</span> api.kagent.dev/v1alpha3
+<span class="k">kind:</span> Agent
+<span class="k">metadata:</span>
+  <span class="k">name:</span> my-first-agent
+<span class="k">spec:</span>
+  <span class="k">template:</span>
+    <span class="k">ref:</span>
+      <span class="k">name:</span> my-first-template
+  <span class="k">harnessRef:</span>
+    <span class="k">name:</span> my-first-harness</pre>
+        <pre class="code" style="margin-top:24px"><span class="p">$ </span>kagent agent invoke --session $SESSION_ID \
+    --task <span class="s">"What is 2+2?"</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Architecture -->
+  <section class="slide" data-duration="16">
+    <h2 class="r">How it fits together</h2>
+    <div class="arch">
+      <div class="row r" style="grid-template-columns:repeat(3, 1fr); max-width:1400px">
+        <div class="node"><strong>Web UI</strong></div>
+        <div class="node"><strong>kagent CLI</strong></div>
+        <div class="node"><strong>kubectl / GitOps</strong></div>
+      </div>
+      <div class="down r"></div>
+      <div class="row r" style="max-width:1400px">
+        <div class="node controller">
+          <strong>kagent controller</strong>
+          <div class="chips"><span class="chip">gRPC</span><span class="chip">A2A</span><span class="chip">MCP</span></div>
+        </div>
+      </div>
+      <div class="down r"></div>
+      <div class="row r" style="grid-template-columns:1fr 1fr 1.4fr; max-width:1640px">
+        <div class="node"><strong>PostgreSQL</strong><span>Sessions · history</span></div>
+        <div class="node"><strong>Agent Substrate</strong><span>Suspend · resume · snapshots</span></div>
+        <div class="node"><strong>Agent runtimes</strong><span>Go ADK · Codex · Claude · custom</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. Models & runtimes -->
+  <section class="slide" data-duration="14">
+    <h2 class="r">Your model. Your runtime.</h2>
+    <div class="grid g2" style="grid-template-columns:1.35fr 1fr">
+      <div class="card r">
+        <h3>LLM providers</h3>
+        <div class="chips">
+          <span class="chip">OpenAI</span><span class="chip">Azure OpenAI</span><span class="chip">Anthropic</span>
+          <span class="chip">Gemini</span><span class="chip">Vertex AI</span><span class="chip">Amazon Bedrock</span>
+          <span class="chip">Ollama</span><span class="chip">Mistral</span><span class="chip">SAP AI Core</span>
+          <span class="chip">Foundry</span>
+        </div>
+      </div>
+      <div class="card r">
+        <h3>Harnesses</h3>
+        <div class="chips">
+          <span class="chip solid">Go ADK</span>
+          <span class="chip">Codex</span><span class="chip">Claude</span><span class="chip">Custom</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. Tools -->
+  <section class="slide" data-duration="14">
+    <h2 class="r">Agents that can actually <span class="accent">do things</span>.</h2>
+    <div class="grid g2">
+      <div class="card r">
+        <h3>MCP tools</h3>
+        <div class="chips">
+          <span class="chip solid">Kubernetes</span><span class="chip solid">Helm</span><span class="chip solid">Istio</span>
+          <span class="chip solid">Argo</span><span class="chip solid">Prometheus</span><span class="chip solid">Grafana</span>
+          <span class="chip solid">Cilium</span>
+        </div>
+      </div>
+      <div class="card r">
+        <h3>Ready-made agents</h3>
+        <div class="chips">
+          <span class="chip">k8s</span><span class="chip">helm</span><span class="chip">istio</span>
+          <span class="chip">argo-rollouts</span><span class="chip">cilium</span><span class="chip">kgateway</span>
+          <span class="chip">observability</span><span class="chip">promql</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. Sessions & observability -->
+  <section class="slide" data-duration="14">
+    <h2 class="r">Durable, observable, testable.</h2>
+    <div class="grid g3">
+      <div class="card r">
+        <h3>Sessions</h3>
+        <p class="body">Conversations and task history persist. Suspend and resume an agent, or checkpoint and fork a new conversation.</p>
+      </div>
+      <div class="card r">
+        <h3>Tracing</h3>
+        <p class="body">OpenTelemetry traces for agent, model and tool execution, in your existing observability stack.</p>
+      </div>
+      <div class="card r">
+        <h3>Open protocols</h3>
+        <p class="body">Talk to agents over A2A, expose them over MCP, and test them through their public APIs.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9. Demo -->
+  <section class="slide demo-slide" data-duration="18">
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+      <symbol id="i-del" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></symbol>
+    </svg>
+    <h2 class="r">Chat with your agents in the UI.</h2>
+    <div class="ui r" aria-label="The kagent UI showing the agents list">
+      <div class="ui-bar">
+        <div class="ui-dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+        <img src="assets/kagent-logo-mark.png" alt="">
+        <span class="ui-brand">kagent</span>
+        <span class="ui-path mono">kagent ui · /agents</span>
+      </div>
+      <div class="ui-body">
+        <nav class="ui-nav">
+          <a><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v4h-7zM14 11h7v10h-7zM3 14h7v7H3z"/></svg>Dashboard</a>
+          <a class="on"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8M4 12a8 6 0 0 1 16 0v4a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4zM9 13h.01M15 13h.01"/></svg>Agents</a>
+          <a><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg>Schedules</a>
+          <a><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 9h6v6H9z"/></svg>Models</a>
+          <a><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01"/></svg>MCP Servers</a>
+          <a><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2zM8 9h8M8 13h5"/></svg>Prompts</a>
+          <a><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 3-3 3-3-3zM5 9l3 3-3 3-3-3zM19 9l3 3-3 3-3-3zM12 16l3 3-3 3-3-3z"/></svg>Agent Substrate</a>
+          <div class="foot"><a><span>↗</span>Documentation</a></div>
+        </nav>
+        <div class="ui-main">
+          <div class="ui-scroll">
+            <div class="ui-head">
+              <div class="ui-title">Agents</div>
+              <div class="ui-actions"><span class="ui-btn">+ New Agent</span><span class="ui-btn">+ New Template</span><span class="ui-btn">+ New Harness</span></div>
+            </div>
+            <div class="ui-card">
+              <div class="ui-card-h">Overview</div>
+              <div class="ui-card-t">
+                <p>An agent consists of one template (describing what it does), plus one harness (describing where and how it runs).</p>
+                <p>Each chat you start belongs to that agent.</p>
+                <p>These map to <span class="v">Agent Substrate</span> concepts. A harness draws on a pool of <b>workers</b>, and each session runs as an <b>actor</b> scheduled onto one of them.</p>
+              </div>
+              <div class="ui-flow">
+                <div class="ui-stack">
+                  <div class="ui-box"><b>AgentTemplate</b><small>The model, prompt and tools.</small></div>
+                  <div class="ui-box"><b>Harness</b><small>The runtime, image and worker pool.</small></div>
+                </div>
+                <svg viewBox="0 0 32 60" height="56" fill="none" stroke="#a78bfa" stroke-width="1.5"><path d="M2 8c14 0 14 22 26 22M2 52c14 0 14-22 26-22M22 25l6 5-6 5"/></svg>
+                <div class="ui-box"><b>Agent</b><small>Inline or shared behavior on a platform-managed harness.</small></div>
+                <span class="ui-arrow">→</span>
+                <div class="ui-box"><b>Session</b><small>One chat with an agent, run as an Agent Substrate Actor.</small></div>
+              </div>
+            </div>
+            <div class="ui-tabs"><span class="on">agents</span><span>templates</span><span>harnesses</span></div>
+            <div class="ui-filters">
+              <span class="ui-field search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search agents</span>
+              <span class="ui-field ns">All namespaces <span>⌄</span></span>
+              <span class="ui-muted">15 of 15 agents</span>
+              <span class="ui-refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg>Refresh</span>
+            </div>
+            <div class="ui-table">
+              <table>
+                <thead><tr><th>Agent</th><th>Namespace</th><th>Template</th><th>Harness</th><th>Status</th><th>Conversations</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td><span class="ui-name">assistant</span><span class="ui-chat"><span class="ping lg"></span></span><span class="ui-desc">General-purpose assistant (low priority).</span></td><td class="mono">kagent</td><td><span class="ui-badge">Inline</span></td><td class="mono">low</td><td><span class="ui-badge ready">Ready</span></td><td>1 conversation</td><td><span class="ui-ops"><svg width="16" height="16"><use href="#i-edit"/></svg><svg class="del" width="16" height="16"><use href="#i-del"/></svg></span></td></tr>
+                  <tr><td><span class="ui-name">billing-ops</span><span class="ui-desc">Investigates failed payments and refund requests. Every write needs a human approval.</span></td><td class="mono">kagent</td><td class="mono">billing-ops</td><td class="mono">secure</td><td><span class="ui-badge ready">Ready</span></td><td>2 conversations</td><td><span class="ui-ops"><svg width="16" height="16"><use href="#i-edit"/></svg><svg class="del" width="16" height="16"><use href="#i-del"/></svg></span></td></tr>
+                  <tr><td><span class="ui-name">cve-watch</span><span class="ui-desc">Watches upstream advisories and opens tracking issues for affected repos.</span></td><td class="mono">kagent</td><td class="mono">cve-watch</td><td class="mono">low</td><td><span class="ui-badge ready">Ready</span></td><td>1 conversation</td><td><span class="ui-ops"><svg width="16" height="16"><use href="#i-edit"/></svg><svg class="del" width="16" height="16"><use href="#i-del"/></svg></span></td></tr>
+                  <tr><td><span class="ui-name">design-to-code</span><span class="ui-desc">Turns Figma frames into React components and opens the pull request.</span></td><td class="mono">kagent</td><td class="mono">design-to-code</td><td class="mono">claude-code</td><td><span class="ui-badge ready">Ready</span></td><td>1 conversation</td><td><span class="ui-ops"><svg width="16" height="16"><use href="#i-edit"/></svg><svg class="del" width="16" height="16"><use href="#i-del"/></svg></span></td></tr>
+                  <tr><td><span class="ui-name">k8s-cost-optimizer</span><span class="ui-desc">Finds idle and over-provisioned workloads and proposes right-sizing PRs.</span></td><td class="mono">kagent</td><td class="mono">k8s-cost-optimizer</td><td class="mono">medium</td><td><span class="ui-badge ready">Ready</span></td><td>1 conversation</td><td><span class="ui-ops"><svg width="16" height="16"><use href="#i-edit"/></svg><svg class="del" width="16" height="16"><use href="#i-del"/></svg></span></td></tr>
+                  <tr><td><span class="ui-name">platform-orchestrator</span><span class="ui-desc">Routes platform requests to the right specialist agent and stitches the answers together.</span></td><td class="mono">kagent</td><td class="mono">platform-orchestrator</td><td class="mono">high</td><td><span class="ui-badge ready">Ready</span></td><td>1 conversation</td><td><span class="ui-ops"><svg width="16" height="16"><use href="#i-edit"/></svg><svg class="del" width="16" height="16"><use href="#i-del"/></svg></span></td></tr>
+                  <tr><td><span class="ui-name">sre-incident-commander</span><span class="ui-desc">Triages alerts, correlates metrics and errors, and drafts the mitigation for an on-call human to approve.</span></td><td class="mono">kagent</td><td class="mono">sre-incident-commander</td><td class="mono">secure</td><td><span class="ui-badge ready">Ready</span></td><td>2 conversations</td><td><span class="ui-ops"><svg width="16" height="16"><use href="#i-edit"/></svg><svg class="del" width="16" height="16"><use href="#i-del"/></svg></span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10. Try it -->
+  <section class="slide" data-duration="16">
+    <h2 class="r">From zero to your first agent.</h2>
+    <div class="term">
+      <div class="line r"><span class="pr">$ </span>kind create cluster --name kagent --image kindest/node:v1.37.0</div>
+      <div class="line r"><span class="pr">$ </span>curl https://raw.githubusercontent.com/kagent-dev/kagent/refs/heads/main/scripts/get-kagent \
+    | bash -s -- --version v1.0.0-rc2</div>
+      <div class="line r"><span class="pr">$ </span>export OPENAI_API_KEY=...</div>
+      <div class="line r"><span class="pr">$ </span>kagent install --namespace kagent</div>
+    </div>
+  </section>
+
+  <!-- 11. Contribute -->
+  <section class="slide" data-duration="16">
+    <h2 class="r">There is a place for you here.</h2>
+    <div class="grid g3" style="margin-top:56px">
+      <div class="card r"><h3>Pick an issue</h3><p class="body">Start with issues labeled <span class="accent">good first issue</span>.</p></div>
+      <div class="card r"><h3>Improve the docs</h3><p class="body">Guides and examples live in <span class="accent">kagent-dev/website</span>.</p></div>
+      <div class="card r"><h3>Build tools &amp; agents</h3><p class="body">Add MCP tools, skills and agents for the projects you know.</p></div>
+    </div>
+    <div class="areas">
+      <div class="area r"><code>go/</code><p>Controller, CLI, Go ADK</p></div>
+      <div class="area r"><code>ui/</code><p>React web UI</p></div>
+      <div class="area r"><code>helm/</code><p>Charts and ready-made agents</p></div>
+    </div>
+  </section>
+
+  <!-- 12. Join -->
+  <section class="slide" data-duration="18">
+    <h2 class="r">Scan, star, say hi.</h2>
+    <div class="links">
+      <div class="link r"><img src="assets/qr-github.svg" alt=""><strong>GitHub</strong></div>
+      <div class="link r"><img src="assets/qr-discord.svg" alt=""><strong>Discord</strong></div>
+      <div class="link r"><img src="assets/qr-docs.svg" alt=""><strong>kagent.dev</strong></div>
+    </div>
+  </section>
+
+  <div id="paused">Paused</div>
+
+  <footer id="footer">
+    <img class="logo" src="assets/icon-dark.svg" alt="kagent">
+    <nav id="progress" aria-label="Slides"></nav>
+  </footer>
+
+</main>
+</div>
+
+<script>
+(() => {
+  const stage = document.getElementById("stage");
+  const slides = [...document.querySelectorAll(".slide")];
+  const progress = document.getElementById("progress");
+  const params = new URLSearchParams(location.search);
+  const speed = Number(params.get("speed")) || 1;
+
+  slides.forEach((slide) => {
+    slide.querySelectorAll(".r").forEach((el, i) => el.style.setProperty("--i", i));
+  });
+
+  const bars = slides.map((_, i) => {
+    const b = document.createElement("button");
+    b.setAttribute("aria-label", `Slide ${i + 1}`);
+    b.appendChild(document.createElement("i"));
+    b.addEventListener("click", (e) => { e.stopPropagation(); go(i); });
+    progress.appendChild(b);
+    return b;
+  });
+
+  let current = -1;
+  let elapsed = 0;
+  let last = performance.now();
+  let paused = false;
+
+  function duration(i) {
+    return (Number(slides[i].dataset.duration) || 12) * 1000 / speed;
+  }
+
+  function go(i) {
+    i = (i + slides.length) % slides.length;
+    if (current >= 0) slides[current].classList.remove("active");
+    current = i;
+    elapsed = 0;
+    slides[i].classList.add("active");
+    bars.forEach((b, j) => {
+      b.classList.toggle("done", j < i);
+      b.firstChild.style.width = j < i ? "100%" : "0%";
+    });
+    history.replaceState(null, "", `#${i + 1}`);
+  }
+
+  function tick(now) {
+    const dt = now - last;
+    last = now;
+    if (!paused) {
+      elapsed += dt;
+      const d = duration(current);
+      bars[current].firstChild.style.width = `${Math.min(100, (elapsed / d) * 100)}%`;
+      if (elapsed >= d) go(current + 1);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function setPaused(p) {
+    paused = p;
+    document.body.classList.toggle("is-paused", p);
+  }
+
+  function fit() {
+    const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+    stage.style.transform = `scale(${s})`;
+  }
+
+  addEventListener("resize", fit);
+
+  addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight" || e.key === "PageDown") go(current + 1);
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") go(current - 1);
+    else if (e.key === " ") { e.preventDefault(); setPaused(!paused); }
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(slides.length - 1);
+    else if (e.key === "f" || e.key === "F") {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    }
+  });
+
+  addEventListener("click", (e) => {
+    if (e.clientX < innerWidth / 3) go(current - 1);
+    else go(current + 1);
+  });
+
+  let idleTimer;
+  function wake() {
+    document.body.classList.remove("idle");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.body.classList.add("idle"), 2500);
+  }
+  addEventListener("mousemove", wake);
+  wake();
+
+  fit();
+  const start = parseInt(location.hash.slice(1), 10);
+  go(Number.isFinite(start) ? start - 1 : 0);
+  requestAnimationFrame((t) => { last = t; tick(t); });
+})();
+</script>
+</body>
+</html>
